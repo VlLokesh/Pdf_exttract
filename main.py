@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 from typing import Optional
 from urllib.error import HTTPError
-from urllib.parse import quote
+from urllib.parse import quote, quote_plus
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
@@ -301,6 +301,176 @@ def save_ocr_result(
                     "error": f"Table '{SUPABASE_TABLE}' not found. Run SQL setup to create it.",
                 }
             return {"saved": False, "error": raw_err}
+
+
+def highlight_matching_text(pdf_path: str, query: str) -> Optional[str]:
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception:
+        return None
+
+    hits = 0
+    for page in doc:
+        matches = page.search_for(query)
+        for match in matches:
+            annot = page.add_highlight_annot(match)
+            annot.update()
+            hits += 1
+
+    if hits == 0:
+        doc.close()
+        return None
+
+    base_name = os.path.splitext(os.path.basename(pdf_path))[0]
+    highlighted_name = f"{base_name}-highlighted-{uuid4().hex[:8]}.pdf"
+    highlighted_path = os.path.join(app.config["UPLOAD_FOLDER"], highlighted_name)
+    doc.save(highlighted_path)
+    doc.close()
+    return highlighted_path
+
+
+def search_rows(query: str) -> list[dict]:
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise RuntimeError("Supabase is not configured")
+
+    if supabase:
+        response = (
+            supabase.table(SUPABASE_TABLE)
+            .select("file_name,page_num,extracted_text,storage_path,storage_url")
+            .ilike("extracted_text", f"%{query}%")
+            .limit(100)
+            .execute()
+        )
+        return response.data or []
+
+    encoded_pattern = quote_plus(f"*{query}*")
+    search_url = (
+        f"{SUPABASE_URL}/rest/v1/{SUPABASE_TABLE}"
+        f"?select=file_name,page_num,extracted_text,storage_path,storage_url"
+        f"&extracted_text=ilike.{encoded_pattern}&limit=100"
+    )
+    req = Request(
+        search_url,
+        method="GET",
+        headers={
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+        },
+    )
+    with urlopen(req) as res:
+        return json.loads(res.read().decode("utf-8"))
+
+
+def ensure_local_pdf_for_highlight(pdf_filename: str, storage_path: Optional[str], storage_url: Optional[str]) -> Optional[str]:
+    local_path = os.path.join(app.config["UPLOAD_FOLDER"], pdf_filename)
+    if os.path.exists(local_path):
+        return local_path
+
+    if storage_url:
+        try:
+            with urlopen(storage_url) as res:
+                file_bytes = res.read()
+            with open(local_path, "wb") as out:
+                out.write(file_bytes)
+            return local_path
+        except Exception:
+            pass
+
+    if storage_path and SUPABASE_URL and SUPABASE_KEY:
+        encoded_path = quote(storage_path, safe="/")
+        object_url = f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{encoded_path}"
+        req = Request(
+            object_url,
+            method="GET",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+            },
+        )
+        try:
+            with urlopen(req) as res:
+                file_bytes = res.read()
+            with open(local_path, "wb") as out:
+                out.write(file_bytes)
+            return local_path
+        except Exception:
+            return None
+
+    return None
+
+
+def build_search_response(query: str):
+    results = []
+    highlighted_files = []
+
+    rows = search_rows(query)
+    for row in rows:
+        pdf_filename = row.get("file_name") or row.get("pdf_filename")
+        page_num = row.get("page_num")
+        extracted_text = (row.get("extracted_text") or "").strip()
+
+        results.append(
+            {
+                "pdf": pdf_filename,
+                "page": (int(page_num) + 1) if isinstance(page_num, int) else None,
+                "text": extracted_text,
+                "storage_path": row.get("storage_path"),
+                "storage_url": row.get("storage_url"),
+            }
+        )
+
+        if not pdf_filename:
+            continue
+        if not pdf_filename.lower().endswith(".pdf"):
+            continue
+
+        file_path = ensure_local_pdf_for_highlight(
+            pdf_filename=pdf_filename,
+            storage_path=row.get("storage_path"),
+            storage_url=row.get("storage_url"),
+        )
+        if not file_path:
+            continue
+
+        highlighted_pdf_path = highlight_matching_text(file_path, query)
+        if highlighted_pdf_path:
+            highlighted_files.append(os.path.basename(highlighted_pdf_path))
+
+    if not results:
+        return jsonify({"message": "No results found"}), 200
+
+    return jsonify({"results": results, "highlighted_files": highlighted_files}), 200
+
+
+@app.route("/api/search", methods=["GET"])
+def search_pdfss():
+    query = request.args.get("query", "").strip()
+    if not query:
+        return jsonify({"error": "No search query provided"}), 400
+
+    try:
+        return build_search_response(query)
+    except HTTPError as exc:
+        err_body = exc.read().decode("utf-8", errors="ignore")
+        return jsonify({"error": f"Error occurred while searching: {exc.code} {exc.reason} {err_body}"}), 500
+    except Exception as exc:
+        return jsonify({"error": f"Error occurred while searching: {str(exc)}"}), 500
+
+
+@app.route("/api/search", methods=["POST"])
+def search_pdfs():
+    data = request.get_json(silent=True) or {}
+    query = (data.get("query") or "").strip()
+    if not query:
+        return jsonify({"error": "No search query provided"}), 400
+
+    try:
+        return build_search_response(query)
+    except HTTPError as exc:
+        err_body = exc.read().decode("utf-8", errors="ignore")
+        return jsonify({"error": f"Error occurred while searching: {exc.code} {exc.reason} {err_body}"}), 500
+    except Exception as exc:
+        return jsonify({"error": f"Error occurred while searching: {str(exc)}"}), 500
 
 
 @app.route("/api/documentsOCR", methods=["POST"])
