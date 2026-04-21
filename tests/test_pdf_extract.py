@@ -4,29 +4,12 @@ from unittest.mock import patch
 import pdf_extract
 
 
-class FakeTable:
-    def __init__(self, rows):
-        self._rows = rows
-
-    def extract(self):
-        return self._rows
-
-
-class FakeTables:
-    def __init__(self, tables):
-        self.tables = tables
-
-
 class FakePage:
-    def __init__(self, text, tables):
+    def __init__(self, text):
         self._text = text
-        self._tables = tables
 
     def get_text(self, mode):
         return self._text
-
-    def find_tables(self):
-        return FakeTables(self._tables)
 
 
 class FakeDoc:
@@ -46,13 +29,19 @@ class PdfExtractTests(unittest.TestCase):
         serialized = pdf_extract._serialize_table_rows(rows)
         self.assertEqual(serialized, "A | B C")
 
+    @patch("pdf_extract._extract_tables_with_pdfplumber")
     @patch("pdf_extract.fitz.open")
-    def test_extract_pdf_content_includes_tables(self, mock_open):
-        page = FakePage(
-            text="Invoice Header",
-            tables=[FakeTable([["Item", "Qty"], ["Pen", "2"]])],
-        )
+    def test_extract_pdf_content_includes_tables(self, mock_open, mock_extract_tables):
+        page = FakePage(text="Invoice Header")
         mock_open.return_value = FakeDoc([page])
+        mock_extract_tables.return_value = [
+            {
+                "page": 1,
+                "table_index": 1,
+                "rows": [["Item", "Qty"], ["Pen", "2"]],
+                "text": "Item | Qty\nPen | 2",
+            }
+        ]
 
         result = pdf_extract.extract_pdf_content("sample.pdf")
 
