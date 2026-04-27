@@ -1,4 +1,5 @@
 import os
+import tempfile
 from typing import Optional
 from uuid import uuid4
 
@@ -8,9 +9,8 @@ from supabase import SupabaseRepository
 
 
 class SearchService:
-    def __init__(self, repo: SupabaseRepository, upload_folder: str) -> None:
+    def __init__(self, repo: SupabaseRepository) -> None:
         self.repo = repo
-        self.upload_folder = upload_folder
 
     def highlight_matching_text(self, pdf_path: str, query: str) -> Optional[str]:
         try:
@@ -32,10 +32,24 @@ class SearchService:
 
         base_name = os.path.splitext(os.path.basename(pdf_path))[0]
         highlighted_name = f"{base_name}-highlighted-{uuid4().hex[:8]}.pdf"
-        highlighted_path = os.path.join(self.upload_folder, highlighted_name)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_out:
+            highlighted_path = tmp_out.name
+
         doc.save(highlighted_path)
         doc.close()
-        return highlighted_path
+        try:
+            _, highlighted_url = self.repo.upload_file(
+                file_path=highlighted_path,
+                file_name=highlighted_name,
+                content_type="application/pdf",
+            )
+            return highlighted_url
+        finally:
+            if os.path.exists(highlighted_path):
+                try:
+                    os.remove(highlighted_path)
+                except OSError:
+                    pass
 
     def ensure_local_pdf_for_highlight(
         self,
@@ -43,16 +57,22 @@ class SearchService:
         storage_path: Optional[str],
         storage_url: Optional[str],
     ) -> Optional[str]:
-        local_path = os.path.join(self.upload_folder, pdf_filename)
-        if os.path.exists(local_path):
-            return local_path
-
+        tmp_suffix = os.path.splitext(pdf_filename)[1] if "." in pdf_filename else ".pdf"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=tmp_suffix) as tmp_pdf:
+            local_path = tmp_pdf.name
         downloaded = self.repo.download_to_path(
             destination_path=local_path,
             storage_path=storage_path,
             storage_url=storage_url,
         )
-        return local_path if downloaded else None
+        if downloaded:
+            return local_path
+        if os.path.exists(local_path):
+            try:
+                os.remove(local_path)
+            except OSError:
+                pass
+        return None
 
     def build_search_payload(self, query: str) -> dict:
         results = []
@@ -87,7 +107,12 @@ class SearchService:
 
             highlighted_pdf_path = self.highlight_matching_text(file_path, query)
             if highlighted_pdf_path:
-                highlighted_files.append(os.path.basename(highlighted_pdf_path))
+                highlighted_files.append(highlighted_pdf_path)
+            if file_path and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except OSError:
+                    pass
 
         if not results:
             return {"message": "No results found"}

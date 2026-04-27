@@ -196,6 +196,36 @@ class SupabaseRepository:
         with urlopen(req) as res:
             return json.loads(res.read().decode("utf-8"))
 
+    def fetch_latest_by_filename(self, file_name: str) -> Optional[dict]:
+        if not self.configured:
+            raise RuntimeError("Supabase is not configured")
+        if not file_name:
+            return None
+
+        encoded_name = quote(file_name, safe="")
+        ordered_url = (
+            f"{self.url}/rest/v1/{self.table}"
+            f"?select=*"
+            f"&file_name=eq.{encoded_name}"
+            f"&order=created_at.desc.nullslast"
+            f"&limit=1"
+        )
+        req = Request(ordered_url, method="GET", headers=self._auth_headers())
+        try:
+            with urlopen(req) as res:
+                rows = json.loads(res.read().decode("utf-8"))
+        except HTTPError:
+            fallback_url = (
+                f"{self.url}/rest/v1/{self.table}"
+                f"?select=*"
+                f"&file_name=eq.{encoded_name}"
+                f"&limit=1"
+            )
+            fallback_req = Request(fallback_url, method="GET", headers=self._auth_headers())
+            with urlopen(fallback_req) as res:
+                rows = json.loads(res.read().decode("utf-8"))
+        return rows[0] if rows else None
+
     def download_to_path(
         self,
         destination_path: str,

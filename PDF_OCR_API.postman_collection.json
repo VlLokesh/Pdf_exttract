@@ -1,0 +1,161 @@
+{
+  "info": {
+    "name": "PDF OCR + Convert API",
+    "_postman_id": "d8a3f67b-0f39-4c76-8d64-6dce6ca4c2f7",
+    "description": "Collection for OCR, search, translate, and audio conversion endpoints.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            ""
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "OCR - Upload Documents",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "files",
+              "type": "file",
+              "src": ""
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/documentsOCR",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "documentsOCR"
+          ]
+        },
+        "description": "Upload one or more files using the same key: files"
+      },
+      "response": []
+    },
+    {
+      "name": "Search Text",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/search?query=invoice",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "search"
+          ],
+          "query": [
+            {
+              "key": "query",
+              "value": "invoice"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Convert - Translate Text",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"target_language\": \"ta\",\n  \"text\": \"Hello world\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/convert",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "convert"
+          ]
+        },
+        "description": "You can use either text or filename. Example filename body: {\n  \"target_language\": \"hi\",\n  \"filename\": \"sample.pdf\"\n}"
+      },
+      "response": []
+    },
+    {
+      "name": "Convert - Text to Audio",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"text\": \"Hello world\",\n  \"target_language\": \"en\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/convert/audio",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "convert",
+            "audio"
+          ]
+        },
+        "description": "Returns downloadable MP3 file."
+      },
+      "response": []
+    },
+    {
+      "name": "OCR Results",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/ocr-results",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "ocr-results"
+          ]
+        }
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:5000"
+    }
+  ]
+}
