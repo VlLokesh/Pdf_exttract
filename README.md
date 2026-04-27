@@ -11,7 +11,7 @@ This project provides a Flask API to extract text from uploaded documents and st
   - `docx`
 - Extracts text:
   - PDF: first tries embedded text (`PyMuPDF`), falls back to OCR per page
-  - Images: OCR with `pytesseract`
+  - Images: OCR with `OCR.space` API
   - DOCX: paragraph text + OCR for embedded images
 - Stores each extracted result in Supabase table
 - Uploads original documents to Supabase Storage bucket
@@ -260,14 +260,15 @@ Behavior:
 - If `target_language` is omitted, English (`en`) TTS is used.
 - Response is a downloadable `audio/mpeg` file.
 
-## Important runtime note (OCR binary)
+## Important runtime note (OCR service)
 
-`pytesseract` requires the `tesseract` system binary.
+This project uses `OCR.space` API for image/scanned OCR.
 
-- Local machine: install Tesseract to enable image/scanned OCR.
-- Vercel: Tesseract is usually not present by default.
-  - Text-based PDFs still work (embedded text extraction via `PyMuPDF`).
-  - Image OCR or scanned PDF OCR may fail unless you use an external OCR service or a runtime that includes Tesseract.
+- Set `OCRSPACE_API_KEY` in local and Vercel environments.
+- PDF extraction runs hybrid mode:
+  - Embedded text extraction via `PyMuPDF`
+  - OCR fallback for low-text/scanned pages
+  - Table extraction via `pdfplumber` with OCR-based table reconstruction fallback
 
 ## Allowed upload size
 

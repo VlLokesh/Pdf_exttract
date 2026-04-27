@@ -16,6 +16,8 @@ VALID_EXTENSIONS = ["pdf", "jpg", "jpeg", "png", "bmp", "gif", "docx"]
 IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "bmp", "gif"}
 OCRSPACE_API_KEY = os.getenv("OCRSPACE_API_KEY", "helloworld")
 OCRSPACE_LANGUAGE = os.getenv("OCRSPACE_LANGUAGE", "eng")
+OCRSPACE_IS_TABLE = os.getenv("OCRSPACE_IS_TABLE", "true").lower() == "true"
+OCR_PDF_FALLBACK_TEXT_THRESHOLD = int(os.getenv("OCR_PDF_FALLBACK_TEXT_THRESHOLD", "120"))
 
 
 def _serialize_table_rows(rows: list[list[str]]) -> str:
@@ -42,13 +44,43 @@ def _parse_ocrspace_text(response_text: str) -> str:
     return "\n".join(chunks)
 
 
-def _ocr_space_from_path(file_path: str) -> str:
+def _ocr_space_from_path(file_path: str, is_table: bool = False) -> str:
     response_text = ocr_space_file(
         filename=file_path,
         api_key=OCRSPACE_API_KEY,
         language=OCRSPACE_LANGUAGE,
+        is_table=is_table,
     )
     return _parse_ocrspace_text(response_text)
+
+
+def _extract_tables_from_ocr_text(ocr_text: str, page_index: int) -> list[dict]:
+    """Best-effort table reconstruction from OCR text when PDF table parsing fails."""
+    lines = [line.strip() for line in (ocr_text or "").splitlines() if line.strip()]
+    if not lines:
+        return []
+
+    rows = []
+    for line in lines:
+        # OCR table output often keeps multiple spaces between visual columns.
+        if "  " not in line and "\t" not in line:
+            continue
+        normalized = line.replace("\t", "  ")
+        cells = [part.strip() for part in normalized.split("  ") if part.strip()]
+        if len(cells) >= 2:
+            rows.append(cells)
+
+    if len(rows) < 2:
+        return []
+
+    return [
+        {
+            "page": page_index,
+            "table_index": 1,
+            "rows": rows,
+            "text": _serialize_table_rows(rows),
+        }
+    ]
 
 
 def extract_text_from_docx(file_path: str) -> str:
@@ -107,23 +139,26 @@ def _extract_tables_with_pdfplumber(pdf_path: str) -> list[dict]:
 def extract_pdf_content(pdf_path: str) -> dict:
     text_chunks = []
     table_items = []
+    ocr_text_by_page = {}
     doc = fitz.open(pdf_path)
 
     for page_index, page in enumerate(doc, start=1):
-        page_text = page.get_text("text")
+        page_text = (page.get_text("text") or "").strip()
         if page_text and page_text.strip():
             text_chunks.append(page_text)
 
-        if not page_text or not page_text.strip():
-            pix = page.get_pixmap(dpi=200)
+        needs_ocr = (not page_text) or (len(page_text) < OCR_PDF_FALLBACK_TEXT_THRESHOLD)
+        if needs_ocr and hasattr(page, "get_pixmap"):
+            pix = page.get_pixmap(dpi=300)
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
                 temp_image_path = tmp_file.name
             try:
                 img.save(temp_image_path, format="PNG")
-                ocr_text = _ocr_space_from_path(temp_image_path)
+                ocr_text = _ocr_space_from_path(temp_image_path, is_table=OCRSPACE_IS_TABLE)
                 if ocr_text.strip():
                     text_chunks.append(ocr_text)
+                    ocr_text_by_page[page_index] = ocr_text
             finally:
                 if os.path.exists(temp_image_path):
                     os.remove(temp_image_path)
@@ -134,6 +169,13 @@ def extract_pdf_content(pdf_path: str) -> dict:
     except Exception:
         # Table extraction is best-effort and should not break OCR flow.
         table_items = []
+
+    # For scanned/image PDFs, pdfplumber can return no tables. Try OCR table reconstruction.
+    pages_with_tables = {t["page"] for t in table_items}
+    for page_index, ocr_text in ocr_text_by_page.items():
+        if page_index in pages_with_tables:
+            continue
+        table_items.extend(_extract_tables_from_ocr_text(ocr_text, page_index))
 
     table_text_chunks = [f"[Table Page {t['page']} #{t['table_index']}]\n{t['text']}" for t in table_items]
     merged_text = "\n\n".join([chunk for chunk in text_chunks + table_text_chunks if chunk.strip()])
