@@ -8,7 +8,7 @@ from werkzeug.utils import secure_filename
 
 from pdf_extract import VALID_EXTENSIONS, extract_file_content,extract_pdf_content
 from search_service import SearchService
-from supabase import SupabaseRepository
+from supabase_repo import SupabaseRepository
 from dotenv import load_dotenv
 
 

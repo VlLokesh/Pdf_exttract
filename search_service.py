@@ -13,7 +13,7 @@ from pypdf.generic import (
     NumberObject,
     TextStringObject,
 )
-from supabase import SupabaseRepository
+from supabase_repo import SupabaseRepository
 
 
 class SearchService:
