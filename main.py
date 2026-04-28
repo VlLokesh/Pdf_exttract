@@ -2,8 +2,10 @@ import os
 import tempfile
 from dataclasses import dataclass
 from io import BytesIO
+from typing import Optional
 
 from flask import Flask, jsonify, request, send_file
+from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
 from pdf_extract import VALID_EXTENSIONS, extract_file_content,extract_pdf_content
@@ -17,6 +19,7 @@ if load_dotenv:
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 repo = SupabaseRepository()
 search_service = SearchService(repo)
@@ -255,42 +258,15 @@ def api_documents_ocr():
 # API Routes
 @app.route('/api/convert', methods=['POST'])
 def api_convert():
-    if 'file' not in request.files or 'convert_type' not in request.form:
-        return jsonify({"error": "No file or conversion type selected"}), 400
+    payload = request.get_json(silent=True) or {}
+    if not request.is_json:
+        return jsonify({"error": "Content-Type must be application/json"}), 400
 
-    file = request.files['file']
-    convert_type = (request.form.get('convert_type') or '').strip().lower()
-    target_language = (request.form.get('target_language') or '').strip().lower()
+    text = (payload.get("extracted_text") or "").strip()
+    target_language = (payload.get("language") or "").strip().lower()
 
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
-
-    raw_name = file.filename or ""
-    file_name = secure_filename(raw_name)
-    if not file_name:
-        return jsonify({"error": "Invalid file name"}), 400
-
-    file_extension = file_name.rsplit(".", 1)[1].lower() if "." in file_name else ""
-    if file_extension not in VALID_EXTENSIONS:
-        return jsonify({"error": "Unsupported file type"}), 400
-
-    try:
-        processed = process_document(file, file_name, file_extension)
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
-
-    text = (processed.get("text") or "").strip()
     if not text:
-        return jsonify({"error": f"No text found in {file_name}"}), 400
-
-    # Keep Supabase row aligned with existing OCR flow.
-    db_status = repo.save_ocr_result(
-        file_name=file_name,
-        file_type=processed.get("file_type", "Unknown"),
-        extracted_text=text,
-        storage_path=processed.get("storage_path"),
-        storage_url=processed.get("storage_url"),
-    )
+        return jsonify({"error": "extracted_text is required"}), 400
 
     if target_language:
         try:
@@ -300,28 +276,7 @@ def api_convert():
     else:
         output_text = text
 
-    if convert_type == 'text':
-        response = {"text": output_text}
-        if not db_status.get("saved"):
-            response["db_warning"] = db_status.get("error", "Unknown DB error")
-        return jsonify(response), 200
-
-    if convert_type == 'audio':
-        audio_lang = target_language or "en"
-        try:
-            audio_fp = text_to_audio_mp3_bytes(output_text, audio_lang)
-        except Exception as exc:
-            return jsonify({"error": str(exc)}), 500
-
-        base_name = os.path.splitext(file_name)[0] or "converted"
-        return send_file(
-            audio_fp,
-            mimetype="audio/mpeg",
-            as_attachment=True,
-            download_name=f"{base_name}.mp3",
-        )
-
-    return jsonify({"error": "Invalid conversion type. Use 'text' or 'audio'."}), 400
+    return jsonify({"text": output_text}), 200
 
 @app.route("/api/search", methods=["GET"])
 def api_search():
