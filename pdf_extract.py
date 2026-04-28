@@ -3,10 +3,10 @@ import os
 import tempfile
 from io import BytesIO
 
-import fitz  # PyMuPDF
 from docx import Document
 from ocrspace import ocr_space_file
 from PIL import Image
+from pypdf import PdfReader
 try:
     import pdfplumber
 except ImportError:
@@ -139,31 +139,26 @@ def _extract_tables_with_pdfplumber(pdf_path: str) -> list[dict]:
 def extract_pdf_content(pdf_path: str) -> dict:
     text_chunks = []
     table_items = []
-    ocr_text_by_page = {}
-    doc = fitz.open(pdf_path)
+    ocr_text_full = ""
 
-    for page_index, page in enumerate(doc, start=1):
-        page_text = (page.get_text("text") or "").strip()
-        if page_text and page_text.strip():
-            text_chunks.append(page_text)
+    try:
+        reader = PdfReader(pdf_path)
+        for page in reader.pages:
+            page_text = (page.extract_text() or "").strip()
+            if page_text:
+                text_chunks.append(page_text)
+    except Exception:
+        # Continue with OCR fallback when PDF text extraction fails.
+        pass
 
-        needs_ocr = (not page_text) or (len(page_text) < OCR_PDF_FALLBACK_TEXT_THRESHOLD)
-        if needs_ocr and hasattr(page, "get_pixmap"):
-            pix = page.get_pixmap(dpi=300)
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
-                temp_image_path = tmp_file.name
-            try:
-                img.save(temp_image_path, format="PNG")
-                ocr_text = _ocr_space_from_path(temp_image_path, is_table=OCRSPACE_IS_TABLE)
-                if ocr_text.strip():
-                    text_chunks.append(ocr_text)
-                    ocr_text_by_page[page_index] = ocr_text
-            finally:
-                if os.path.exists(temp_image_path):
-                    os.remove(temp_image_path)
+    merged_native_text = "\n\n".join([chunk for chunk in text_chunks if chunk.strip()])
+    needs_ocr_fallback = (not merged_native_text) or (len(merged_native_text) < OCR_PDF_FALLBACK_TEXT_THRESHOLD)
+    if needs_ocr_fallback:
+        # OCR.space supports direct PDF OCR, avoiding native rendering dependencies.
+        ocr_text_full = _ocr_space_from_path(pdf_path, is_table=OCRSPACE_IS_TABLE).strip()
+        if ocr_text_full:
+            text_chunks.append(ocr_text_full)
 
-    doc.close()
     try:
         table_items = _extract_tables_with_pdfplumber(pdf_path)
     except Exception:
@@ -171,11 +166,8 @@ def extract_pdf_content(pdf_path: str) -> dict:
         table_items = []
 
     # For scanned/image PDFs, pdfplumber can return no tables. Try OCR table reconstruction.
-    pages_with_tables = {t["page"] for t in table_items}
-    for page_index, ocr_text in ocr_text_by_page.items():
-        if page_index in pages_with_tables:
-            continue
-        table_items.extend(_extract_tables_from_ocr_text(ocr_text, page_index))
+    if not table_items and ocr_text_full:
+        table_items.extend(_extract_tables_from_ocr_text(ocr_text_full, 1))
 
     table_text_chunks = [f"[Table Page {t['page']} #{t['table_index']}]\n{t['text']}" for t in table_items]
     merged_text = "\n\n".join([chunk for chunk in text_chunks + table_text_chunks if chunk.strip()])
