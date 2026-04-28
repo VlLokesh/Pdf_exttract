@@ -80,15 +80,26 @@
       "name": "Convert - Translate Text",
       "request": {
         "method": "POST",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
+        "header": [],
         "body": {
-          "mode": "raw",
-          "raw": "{\n  \"target_language\": \"ta\",\n  \"text\": \"Hello world\"\n}"
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": ""
+            },
+            {
+              "key": "convert_type",
+              "value": "text",
+              "type": "text"
+            },
+            {
+              "key": "target_language",
+              "value": "ta",
+              "type": "text"
+            }
+          ]
         },
         "url": {
           "raw": "{{baseUrl}}/api/convert",
@@ -100,7 +111,7 @@
             "convert"
           ]
         },
-        "description": "You can use either text or filename. Example filename body: {\n  \"target_language\": \"hi\",\n  \"filename\": \"sample.pdf\"\n}"
+        "description": "Upload a file and set convert_type=text. target_language is optional."
       },
       "response": []
     },
@@ -108,44 +119,210 @@
       "name": "Convert - Text to Audio",
       "request": {
         "method": "POST",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
+        "header": [],
         "body": {
-          "mode": "raw",
-          "raw": "{\n  \"text\": \"Hello world\",\n  \"target_language\": \"en\"\n}"
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": ""
+            },
+            {
+              "key": "convert_type",
+              "value": "audio",
+              "type": "text"
+            },
+            {
+              "key": "target_language",
+              "value": "en",
+              "type": "text"
+            }
+          ]
         },
         "url": {
-          "raw": "{{baseUrl}}/api/convert/audio",
+          "raw": "{{baseUrl}}/api/convert",
           "host": [
             "{{baseUrl}}"
           ],
           "path": [
             "api",
-            "convert",
-            "audio"
+            "convert"
           ]
         },
-        "description": "Returns downloadable MP3 file."
+        "description": "Upload a file and set convert_type=audio. Returns downloadable MP3 file."
       },
       "response": []
     },
     {
-      "name": "OCR Results",
+      "name": "Upload PDFs",
       "request": {
-        "method": "GET",
+        "method": "POST",
         "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "files",
+              "type": "file",
+              "src": ""
+            }
+          ]
+        },
         "url": {
-          "raw": "{{baseUrl}}/api/ocr-results",
+          "raw": "{{baseUrl}}/api/upload_pdfs",
           "host": [
             "{{baseUrl}}"
           ],
           "path": [
             "api",
-            "ocr-results"
+            "upload_pdfs"
+          ]
+        },
+        "description": "Upload one or more PDFs using the same key: files"
+      },
+      "response": []
+    },
+    {
+      "name": "Convert - DOCX to PDF",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": ""
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/convert_docx_to_pdf",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "convert_docx_to_pdf"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Convert - Image to PDF",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": ""
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/convert_image_to_pdf",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "convert_image_to_pdf"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Convert - Image or PDF to DOCX",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": ""
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/convert_image_or_pdf_to_docx",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "convert_image_or_pdf_to_docx"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Transform - File to DOCX",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": ""
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/transform_file_to_docx",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "transform_file_to_docx"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Convert - Image to Audio",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": ""
+            },
+            {
+              "key": "target_language",
+              "value": "en",
+              "type": "text"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/convert_image_to_audio",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "convert_image_to_audio"
           ]
         }
       },

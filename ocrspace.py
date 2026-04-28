@@ -76,4 +76,4 @@ def ocr_space_url(url, overlay=False, api_key='helloworld', language='eng'):
 if __name__ == "__main__":
     # Example usage:
     print(ocr_space_file(filename="example_image.png", language="pol"))
-    print(ocr_space_url(url="http://i.imgur.com/31d5L5y.jpg"))
+    print(ocr_space_url(url="http://i.imgur.com/3cle1d5L5y.jpg"))
