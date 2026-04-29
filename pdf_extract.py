@@ -35,12 +35,28 @@ def _parse_ocrspace_text(response_text: str) -> str:
     except json.JSONDecodeError:
         return ""
 
+    if payload.get("IsErroredOnProcessing"):
+        error_message = payload.get("ErrorMessage") or "OCR processing failed."
+        error_details = payload.get("ErrorDetails") or ""
+        combined = f"{error_message} {error_details}".strip()
+        raise RuntimeError(combined)
+
     parsed_results = payload.get("ParsedResults") or []
     chunks = []
+    page_errors = []
     for item in parsed_results:
+        page_exit_code = item.get("FileParseExitCode")
+        if page_exit_code not in (None, 1):
+            page_error = (item.get("ErrorMessage") or item.get("ErrorDetails") or "").strip()
+            if page_error:
+                page_errors.append(page_error)
         chunk = (item.get("ParsedText") or "").strip()
         if chunk:
             chunks.append(chunk)
+
+    if not chunks and page_errors:
+        raise RuntimeError("; ".join(dict.fromkeys(page_errors)))
+
     return "\n".join(chunks)
 
 

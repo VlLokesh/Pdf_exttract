@@ -1,14 +1,13 @@
 import os
+import hashlib
 import tempfile
-from dataclasses import dataclass
 from io import BytesIO
-from typing import Optional
 
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
-from pdf_extract import VALID_EXTENSIONS, extract_file_content,extract_pdf_content
+from pdf_extract import VALID_EXTENSIONS, extract_file_content
 from search_service import SearchService
 from supabase_repo import SupabaseRepository
 from dotenv import load_dotenv
@@ -33,20 +32,6 @@ try:
     from gtts import gTTS
 except Exception:
     gTTS = None
-
-
-@dataclass
-class ConvertRequest:
-    target_language: str
-    text: str = ""
-    filename: str = ""
-
-
-@dataclass
-class AudioRequest:
-    text: str = ""
-    filename: str = ""
-    target_language: str = ""
 
 
 def get_cached_document(file_name: str) -> dict | None:
@@ -160,20 +145,6 @@ def text_to_audio_mp3_bytes(text: str, language: str) -> BytesIO:
     return audio_buffer
 
 
-def _parse_convert_request(payload: dict) -> ConvertRequest:
-    return ConvertRequest(
-        target_language=(payload.get("target_language") or "").strip(),
-        text=(payload.get("text") or "").strip(),
-        filename=(payload.get("filename") or "").strip(),
-    )
-
-def _parse_audio_request(payload: dict) -> AudioRequest:
-    return AudioRequest(
-        text=(payload.get("text") or "").strip(),
-        filename=(payload.get("filename") or "").strip(),
-        target_language=(payload.get("target_language") or "").strip().lower(),
-    )
-
 @app.route("/")
 def index():
     return jsonify(
@@ -278,6 +249,61 @@ def api_convert():
 
     return jsonify({"text": output_text}), 200
 
+@app.route("/api/convert/audio", methods=["POST"])
+def api_convert_audio():
+    if not gTTS:
+        return jsonify({"error": "Audio dependency missing. Install 'gTTS'."}), 500
+
+    file = request.files.get("file")
+    target_lang = (request.form.get("target_language") or "en").strip().lower()
+
+    if not file or not file.filename:
+        return jsonify({"error": "No file uploaded. Send `file` in form-data."}), 400
+
+    file_name = secure_filename(file.filename)
+    if not file_name:
+        return jsonify({"error": "Invalid file name"}), 400
+
+    file_extension = file_name.rsplit(".", 1)[1].lower() if "." in file_name else ""
+    if file_extension not in VALID_EXTENSIONS:
+        return jsonify({"error": "Invalid file format. Allowed: pdf, jpg, jpeg, png, bmp, gif, docx"}), 400
+
+    try:
+        processed = process_document(file, file_name, file_extension)
+        source_text = (processed.get("text") or "").strip()
+    except Exception as exc:
+        return jsonify({"error": f"Failed to process file: {str(exc)}"}), 500
+
+    if not source_text:
+        return jsonify({"error": "OCR returned empty text for uploaded file. Upload a clearer image/PDF or verify OCRSPACE_API_KEY."}), 400
+
+    final_text = source_text.strip()
+
+    if target_lang and target_lang != "en":
+        try:
+            final_text = translate_text(source_text, target_lang)
+        except Exception as exc:
+            return jsonify({"error": f"Translation failed: {str(exc)}"}), 500
+
+    try:
+        tts = gTTS(text=final_text, lang=target_lang)
+        audio_buffer = BytesIO()
+        tts.write_to_fp(audio_buffer)
+        audio_buffer.seek(0)
+
+        stem = os.path.splitext(file_name)[0] if file_name else "text"
+        text_hash = hashlib.md5(final_text[:400].encode("utf-8", errors="ignore")).hexdigest()[:8]
+        audio_filename = f"{stem or 'text'}_{target_lang}_{text_hash}.mp3"
+    except Exception as exc:
+        return jsonify({"error": f"Audio generation failed: {str(exc)}"}), 500
+
+    return send_file(
+        audio_buffer,
+        mimetype="audio/mpeg",
+        as_attachment=True,
+        download_name=audio_filename,
+    )
+
 @app.route("/api/search", methods=["GET"])
 def api_search():
     if not repo.configured:
@@ -356,4 +382,4 @@ def upload_pdfs():
     ), 200
 
 if __name__ == "__main__":
-    app.run(debug=False)
+    app.run(debug=True)
