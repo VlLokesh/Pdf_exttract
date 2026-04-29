@@ -11,7 +11,10 @@ from pdf_extract import VALID_EXTENSIONS, extract_file_content
 from search_service import SearchService
 from supabase_repo import SupabaseRepository
 from dotenv import load_dotenv
-
+from deep_translator import GoogleTranslator
+from pdf2docx import Converter
+from fpdf import FPDF
+from gtts import gTTS
 
 if load_dotenv:
     load_dotenv()
@@ -22,17 +25,6 @@ CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 repo = SupabaseRepository()
 search_service = SearchService(repo)
-
-try:
-    from deep_translator import GoogleTranslator
-except Exception:
-    GoogleTranslator = None
-
-try:
-    from gtts import gTTS
-except Exception:
-    gTTS = None
-
 
 def get_cached_document(file_name: str) -> dict | None:
     if not file_name or not repo.configured:
@@ -317,6 +309,55 @@ def api_search():
         return jsonify({"error": str(exc)}), 500
     return jsonify(payload), 200
 
+@app.route("/api/convert_image_or_pdf_to_docx", methods=["POST"])
+def convert_image_or_pdf_to_docx():
+    if "file" not in request.files:
+        return jsonify({"error": "No file part"}), 400
+
+    file = request.files["file"]
+    if not file or file.filename == "":
+        return jsonify({"error": "No selected file"}), 400
+
+    filename = secure_filename(file.filename)
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+
+    if ext == "pdf":
+        if not Converter:
+            return jsonify({"error": "pdf2docx is not installed. Please install pdf2docx."}), 500
+
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_in:
+                file.save(tmp_in.name)
+                tmp_in_path = tmp_in.name
+
+            tmp_out_path = tmp_in_path.replace(".pdf", ".docx")
+            cv = Converter(tmp_in_path)
+            cv.convert(tmp_out_path)
+            cv.close()
+
+            out_name = filename.rsplit(".", 1)[0] + ".docx"
+            return send_file(tmp_out_path, as_attachment=True, download_name=out_name)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    else:
+        # Image to DOCX
+        try:
+            from docx import Document
+            from docx.shared import Inches
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}") as tmp_in:
+                file.save(tmp_in.name)
+                tmp_in_path = tmp_in.name
+
+            doc = Document()
+            doc.add_picture(tmp_in_path, width=Inches(6.0))
+
+            tmp_out = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
+            doc.save(tmp_out.name)
+
+            out_name = filename.rsplit(".", 1)[0] + ".docx" if "." in filename else "converted.docx"
+            return send_file(tmp_out.name, as_attachment=True, download_name=out_name)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
 @app.route('/api/upload_pdfs', methods=['POST'])
 def upload_pdfs():
@@ -382,4 +423,4 @@ def upload_pdfs():
     ), 200
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=False)
