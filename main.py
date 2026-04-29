@@ -1,6 +1,8 @@
 import os
 import hashlib
 import tempfile
+import time
+import base64
 from io import BytesIO
 
 from flask import Flask, jsonify, request, send_file
@@ -15,6 +17,7 @@ from deep_translator import GoogleTranslator
 from pdf2docx import Converter
 from fpdf import FPDF
 from gtts import gTTS
+from gtts.tts import gTTSError
 
 if load_dotenv:
     load_dotenv()
@@ -137,6 +140,29 @@ def text_to_audio_mp3_bytes(text: str, language: str) -> BytesIO:
     return audio_buffer
 
 
+def _is_tts_rate_limited(error: Exception) -> bool:
+    message = str(error).lower()
+    return "429" in message or "too many requests" in message or "rate limit" in message
+
+
+def _generate_tts_with_retry(text: str, language: str, attempts: int = 3) -> BytesIO:
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            audio_buffer = BytesIO()
+            tts = gTTS(text=text, lang=language or "en")
+            tts.write_to_fp(audio_buffer)
+            audio_buffer.seek(0)
+            return audio_buffer
+        except (gTTSError, Exception) as exc:
+            last_error = exc
+            if not _is_tts_rate_limited(exc):
+                raise
+            if attempt < attempts - 1:
+                time.sleep(2 ** attempt)
+    raise RuntimeError(f"TTS rate limit reached after {attempts} attempts: {str(last_error)}")
+
+
 @app.route("/")
 def index():
     return jsonify(
@@ -248,6 +274,7 @@ def api_convert_audio():
 
     file = request.files.get("file")
     target_lang = (request.form.get("target_language") or "en").strip().lower()
+    response_format = (request.form.get("response_format") or request.args.get("response_format") or "").strip().lower()
 
     if not file or not file.filename:
         return jsonify({"error": "No file uploaded. Send `file` in form-data."}), 400
@@ -278,15 +305,13 @@ def api_convert_audio():
             return jsonify({"error": f"Translation failed: {str(exc)}"}), 500
 
     try:
-        tts = gTTS(text=final_text, lang=target_lang)
-        audio_buffer = BytesIO()
-        tts.write_to_fp(audio_buffer)
-        audio_buffer.seek(0)
-
+        audio_buffer = _generate_tts_with_retry(final_text, target_lang, attempts=3)
         stem = os.path.splitext(file_name)[0] if file_name else "text"
         text_hash = hashlib.md5(final_text[:400].encode("utf-8", errors="ignore")).hexdigest()[:8]
         audio_filename = f"{stem or 'text'}_{target_lang}_{text_hash}.mp3"
     except Exception as exc:
+        if _is_tts_rate_limited(exc):
+            return jsonify({"error": "TTS provider rate-limited this request. Please retry after 30-60 seconds."}), 503
         return jsonify({"error": f"Audio generation failed: {str(exc)}"}), 500
 
     return send_file(
@@ -294,7 +319,13 @@ def api_convert_audio():
         mimetype="audio/mpeg",
         as_attachment=True,
         download_name=audio_filename,
-    )
+    ) if response_format != "base64" else jsonify(
+        {
+            "filename": audio_filename,
+            "mime_type": "audio/mpeg",
+            "audio_base64": base64.b64encode(audio_buffer.getvalue()).decode("utf-8"),
+        }
+    ), 200
 
 @app.route("/api/search", methods=["GET"])
 def api_search():
@@ -358,6 +389,39 @@ def convert_image_or_pdf_to_docx():
             return send_file(tmp_out.name, as_attachment=True, download_name=out_name)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
+
+@app.route("/api/transform_file_to_docx", methods=["POST"])
+def transform_file_to_docx():
+    if "file" not in request.files:
+        return jsonify({"error": "No file part"}), 400
+
+    file = request.files["file"]
+    if not file or file.filename == "":
+        return jsonify({"error": "No selected file"}), 400
+
+    filename = secure_filename(file.filename)
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+
+    try:
+        from docx import Document
+        from pdf_extract import extract_file_content
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}") as tmp_in:
+            file.save(tmp_in.name)
+            tmp_in_path = tmp_in.name
+
+        extracted = extract_file_content(tmp_in_path, ext)
+        text = extracted.get("text", "")
+
+        doc = Document()
+        doc.add_paragraph(text)
+
+        tmp_out = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
+        doc.save(tmp_out.name)
+
+        out_name = filename.rsplit(".", 1)[0] + ".docx" if "." in filename else "transformed.docx"
+        return send_file(tmp_out.name, as_attachment=True, download_name=out_name)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/upload_pdfs', methods=['POST'])
 def upload_pdfs():
